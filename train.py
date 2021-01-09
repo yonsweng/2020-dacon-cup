@@ -29,6 +29,7 @@ train = train.groupby('date').sum().reset_index()
 train['weekday'] = train['date'].apply(lambda x: x.weekday())
 kr_holidays = holidays.KR()
 train['holiday'] = train['date'].apply(lambda x: x in kr_holidays)
+train.to_csv('train.csv', index=False, encoding='euc-kr')
 
 
 ''' Train-Valid split '''
@@ -55,18 +56,40 @@ class Model(nn.Module):
     """Some Information about Model"""
     def __init__(self):
         super(Model, self).__init__()
-        self.l1 = nn.Linear(6, 128)
-        self.rnn = nn.GRU(input_size=128, hidden_size=128)
-        self.l2 = nn.Linear(128, 4)
+        self.l1 = nn.Sequential(
+            nn.Linear(6, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3)
+        )
+        self.rnn = nn.GRU(input_size=1024, hidden_size=1024, num_layers=2)
+        self.l2 = nn.Sequential(
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 4)
+        )
         self.dropout = nn.Dropout(0.3)
 
     def forward(self, X, h_n=None):
-        X = F.relu(self.l1(X))
-        X = self.dropout(X)
+        X = self.l1(X)
         X, h_n = self.rnn(X, h_n) if h_n is not None else self.rnn(X)
-        X = F.relu(X)
         X = self.dropout(X)
-        X = F.relu(self.l2(X))
+        X = self.l2(X)
         return X, h_n
 
 
@@ -76,11 +99,11 @@ def criterion(pred, true):
     # w0, w1, w2, w3 <= train.csv의 사용자 수, 세션 수, 신규 방문자 수, 페이지 뷰 수 4가지 항목별 평균값
     loss = torch.sqrt(torch.mean(torch.square(
                 true[:, :, 0] - pred[:, :, 0]))) / w0 + \
-            torch.sqrt(torch.mean(torch.square(
+           torch.sqrt(torch.mean(torch.square(
                 true[:, :, 1] - pred[:, :, 1]))) / w1 + \
-            torch.sqrt(torch.mean(torch.square(
+           torch.sqrt(torch.mean(torch.square(
                 true[:, :, 2] - pred[:, :, 2]))) / w2 + \
-            torch.sqrt(torch.mean(torch.square(
+           torch.sqrt(torch.mean(torch.square(
                 true[:, :, 3] - pred[:, :, 3]))) / w3
     return loss
 
@@ -95,10 +118,10 @@ def test(h_n):
 
 
 ''' Training '''
-num_epochs = 4000
+num_epochs = 700
 min_loss = 999.
 model = Model().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-1)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 for t in range(1, num_epochs + 1):
     pred, h_n = model(x)
@@ -123,6 +146,7 @@ for t in range(1, num_epochs + 1):
 
 ''' Prediction '''
 # Pass validation data
+model.load_state_dict(torch.load('models/model.pt'))
 x = torch.cat([vx[:1], vy[:-1]], dim=0)
 _, h_n = model(x, saved_h_n)
 
